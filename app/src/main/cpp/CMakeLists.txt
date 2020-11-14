@@ -19,12 +19,22 @@ project("androidffmpeg")
 include_directories(include)
 
 # 设置 ffmpeg 库所在路径的变量
-set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/${ANDROID_ABI})
+set(FFMPEG_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/${ANDROID_ABI})
 
-message("CMAKE_CURRENT_SOURCE_DIR = ${CMAKE_CURRENT_SOURCE_DIR}")
+message("FFMPEG_LIB_DIR = ${FFMPEG_LIB_DIR}")
 
 add_library(avcodec SHARED IMPORTED)
-set_target_properties(avcodec PROPERTIES IMPORTED_LOCATION ${FFMPEG_DIR}/libavcodec.so)
+add_library(avformat SHARED IMPORTED)
+add_library(avutil SHARED IMPORTED)
+add_library(swscale SHARED IMPORTED)
+add_library(swresample SHARED IMPORTED)
+
+set_target_properties(avcodec PROPERTIES IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/libavcodec.so)
+set_target_properties(avformat PROPERTIES IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/libavformat.so)
+set_target_properties(avutil PROPERTIES IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/libavutil.so)
+set_target_properties(swscale PROPERTIES IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/libswscale.so)
+set_target_properties(swresample PROPERTIES IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/libswresample.so)
+
 
 add_library( # Sets the name of the library.
         native-lib
@@ -56,7 +66,7 @@ find_library( # Sets the name of the path variable.
 target_link_libraries( # Specifies the target library.
         native-lib
         android
-        avcodec
+        avcodec avformat avutil swscale swresample
         #                       avformat avcodec swscale avutil
 
         # Links the target library to the log library
