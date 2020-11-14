@@ -29,8 +29,6 @@ public class MainActivity extends AppCompatActivity {
 
     public native String stringFromJNI();
 
-    public native boolean open(String url, Object handle);
-
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
