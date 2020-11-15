@@ -3,9 +3,10 @@
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
+#include <SLES/OpenSLES.h>
+#include <SLES/OpenSLES_Android.h>
+#include<iostream>
 
-#define LOG_TAG "AndroidFFmpeg"
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 extern "C" {
 // FFmpeg 是 C 语言库
 #include <libavcodec/avcodec.h>
@@ -15,7 +16,8 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
-#include<iostream>
+#define LOG_TAG "AndroidFFmpeg"
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 using namespace std;
 
@@ -39,6 +41,51 @@ JNI_OnLoad(JavaVM *vm, void *res) {
     return JNI_VERSION_1_4;
 }
 
+static SLObjectItf engineSL = NULL;
+
+SLEngineItf CreateSL() {
+    SLresult re;
+    SLEngineItf en;
+    re = slCreateEngine(&engineSL, 0, 0, 0, 0, 0);
+    if (re != SL_RESULT_SUCCESS) {
+        return NULL;
+    }
+    // 实例化
+    re = (*engineSL)->Realize(engineSL, SL_BOOLEAN_FALSE);
+    if (re != SL_RESULT_SUCCESS) {
+        return NULL;
+    }
+    re = (*engineSL)->GetInterface(engineSL, SL_IID_ENGINE, &en);
+    if (re != SL_RESULT_SUCCESS) {
+        return NULL;
+    }
+    return en;
+}
+
+void PcmCall(SLAndroidSimpleBufferQueueItf bf, void *context) {
+    LOGW("PcmCall");
+    static FILE *fp = NULL;
+    static char *buf = NULL;
+    if (!buf) {
+        buf = new char[1024 * 1024];
+    }
+    if (!fp) {
+        fp = fopen("/sdcard/test.pcm", "rb");
+    }
+    if (!fp) {
+        LOGW("fopen failed");
+        return;
+    }
+    if (feof(fp) == 0) {
+        LOGW("feof 0");
+        int len = fread(buf, 1, 1024, fp);
+        LOGW("feof len = %d", len);
+        if (len > 0) {
+            (*bf)->Enqueue(bf, buf, len);
+        }
+    }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_wang_androidffmpeg_MainActivity_stringFromJNI(
         JNIEnv *env,
@@ -47,6 +94,72 @@ Java_com_wang_androidffmpeg_MainActivity_stringFromJNI(
 
     hello += avcodec_configuration();
 
+    // 创建引擎
+    SLEngineItf eng = CreateSL();
+    if (eng) {
+        LOGW("CreateSL success!");
+    } else {
+        LOGW("CreateSL failed!");
+    }
+
+    // 创建混音器
+    SLObjectItf mix = NULL;
+    SLresult re = 0;
+    re = (*eng)->CreateOutputMix(eng, &mix, 0, 0, 0);
+    if (re != SL_RESULT_SUCCESS) {
+        LOGW("CreateOutputMix failed!");
+    }
+    re = (*mix)->Realize(mix, SL_BOOLEAN_FALSE); // 阻塞式等待
+    if (re != SL_RESULT_SUCCESS) {
+        LOGW("mix Realize failed!");
+    }
+    SLDataLocator_OutputMix outmix = {SL_DATALOCATOR_OUTPUTMIX, mix};
+    SLDataSink audioSink = {&outmix, 0};
+
+    // 配置音频信息
+    SLDataLocator_AndroidSimpleBufferQueue que = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 10};
+    // 音频格式
+    SLDataFormat_PCM pcm = {
+            SL_DATAFORMAT_PCM,
+            2, // 声道数
+            SL_SAMPLINGRATE_44_1,
+            SL_PCMSAMPLEFORMAT_FIXED_16,
+            SL_PCMSAMPLEFORMAT_FIXED_16,
+            SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT,
+            SL_BYTEORDER_LITTLEENDIAN}; // 字节序，小端
+
+    SLDataSource ds = {&que, &pcm};
+    // 创建播放器
+    SLObjectItf player = NULL;
+    SLPlayItf iplayer = NULL;
+    SLAndroidSimpleBufferQueueItf pcmQue = NULL;
+    const SLInterfaceID ids[] = {SL_IID_BUFFERQUEUE};
+    const SLboolean req[] = {SL_BOOLEAN_TRUE};
+    re = (*eng)->CreateAudioPlayer(eng, &player, &ds, &audioSink, sizeof(ids)/sizeof(SLInterfaceID), ids, req);
+    if (re != SL_RESULT_SUCCESS) {
+        LOGW("CreateAudioPlayer failed!");
+    } else {
+        LOGW("CreateAudioPlayer success!");
+    }
+    (*player)->Realize(player, SL_BOOLEAN_FALSE);
+    // 获取player接口
+    re = (*player)->GetInterface(player, SL_IID_PLAY, &iplayer);
+    if (re != SL_RESULT_SUCCESS) {
+        LOGW("GetInterface SL_IID_PLAY failed");
+    }
+    // 获取队列
+    re = (*player)->GetInterface(player, SL_IID_BUFFERQUEUE, &pcmQue);
+    if (re != SL_RESULT_SUCCESS) {
+        LOGW("GetInterface SL_IID_BUFFERQUEUE failed");
+    }
+
+    // 设置回调函数，播放队列调用
+    (*pcmQue)->RegisterCallback(pcmQue, PcmCall, 0);
+
+    (*iplayer)->SetPlayState(iplayer, SL_PLAYSTATE_PLAYING);
+
+    // 启动队列回调
+    (*pcmQue)->Enqueue(pcmQue, "", 1);
     return env->NewStringUTF(hello.c_str());
 }
 
@@ -89,9 +202,9 @@ Java_com_wang_androidffmpeg_XPlay_open(JNIEnv *env, jobject thiz, jstring url, j
             LOGW("视频数据");
             videoStream = i;
             fps = r2d(as->avg_frame_rate);
-            LOGW("fps = %d, width = %d, height = %d, codec_id = %d, pixel_format = %d",fps, 
-				as->codecpar->width, 
-				 as->codecpar->height,
+            LOGW("fps = %d, width = %d, height = %d, codec_id = %d, pixel_format = %d", fps,
+                 as->codecpar->width,
+                 as->codecpar->height,
                  as->codecpar->codec_id,
                  as->codecpar->format);
         } else if (as->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
@@ -124,7 +237,7 @@ Java_com_wang_androidffmpeg_XPlay_open(JNIEnv *env, jobject thiz, jstring url, j
     vc->thread_count = 2; // 单线程解码
     // 打开解码器
     re = avcodec_open2(vc, 0, 0);
-    LOGW("vc timebase = %d/ %d",vc->time_base.num,vc->time_base.den);
+    LOGW("vc timebase = %d/ %d", vc->time_base.num, vc->time_base.den);
     if (re != 0) { // 不能是 if (!re)
         LOGW("video avcodec_open2 failed!");
         return;
@@ -200,7 +313,6 @@ Java_com_wang_androidffmpeg_XPlay_open(JNIEnv *env, jobject thiz, jstring url, j
         re = avcodec_send_packet(cc, pkt);
 
         //发送到线程中解码
-        int p = pkt->pts;
         av_packet_unref(pkt);
 
         if (re != 0) {
