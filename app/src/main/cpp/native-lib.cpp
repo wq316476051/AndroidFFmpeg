@@ -5,7 +5,7 @@
 #include <android/native_window_jni.h>
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
-#include<iostream>
+#include <iostream>
 
 extern "C" {
 // FFmpeg 是 C 语言库

@@ -16,6 +16,8 @@
         app:layout_constraintTop_toTopOf="parent" />
 
     <com.wang.androidffmpeg.XPlay
+        app:layout_constraintWidth_default="percent"
+        app:layout_constraintWidth_percent="1"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
